@@ -2,24 +2,28 @@ import { Chain } from "@defillama/sdk/build/general";
 import { SimpleAdapter } from "../../adapters/types";
 import { getChainVolume } from "./getLyraSubgraphVolume";
 
-const endpoints: { [chain: string]: string } = {
-  optimism: "https://api.lyra.finance/subgraph/optimism/v1/api",
-  arbitrum: "https://api.lyra.finance/subgraph/arbitrum/v2/api",
+const endpoints: { [chain: string]: string[] } = {
+  optimism: [
+    "https://subgraph.satsuma-prod.com/sw9vuxiQey3c/lyra/optimism-mainnet-newport/api"
+  ],
+  arbitrum: ["https://subgraph.satsuma-prod.com/sw9vuxiQey3c/lyra/arbitrum-mainnet/api"],
 };
 
 const subgraph = getChainVolume({
   graphUrls: endpoints,
 });
 
-const adapter: SimpleAdapter = {
+const adapters: SimpleAdapter = {
+  version: 2,
   adapter: Object.keys(endpoints).reduce((acc, chain) => {
     return {
       ...acc,
       [chain]: {
         fetch: subgraph(chain as Chain),
-        start: async () => 1656154800
-      }
-    }
-  }, {})
-};
-export default adapter;
+        start: 1656154800,
+      },
+    };
+  }, {}),
+}
+
+export default adapters;

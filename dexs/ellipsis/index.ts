@@ -3,12 +3,12 @@ import { SimpleAdapter } from "../../adapters/types";
 import fetchURL from "../../utils/fetchURL"
 
 const endpoints: { [chain: string]: string } = {
-  bsc: "https://api.ellipsis.finance/api/getVolume",
+  bsc: "https://api.ellipsis.finance/api/getAll",
 };
 
 interface IAPIResponse {
   success: boolean
-  data: {
+  getVolume: {
     total: string,
     day: string,
     generatedTimeMs: number
@@ -18,9 +18,9 @@ interface IAPIResponse {
 const fetch = (chain: string) => async () => {
   const response: IAPIResponse = (await fetchURL(endpoints[chain])).data;
   return {
-    dailyVolume: `${response.data.day}`,
-    totalVolume: `${response.data.total}`,
-    timestamp: Math.trunc(response.data.generatedTimeMs / 1000),
+    dailyVolume: `${response.getVolume.day}`,
+    totalVolume: `${response.getVolume.total}`,
+    timestamp: Math.trunc(response.getVolume.generatedTimeMs / 1000),
   };
 };
 
@@ -30,7 +30,7 @@ const adapter: SimpleAdapter = {
       ...acc,
       [chain]: {
         fetch: fetch(chain),
-        start: async () => 0,
+        start: 0,
         runAtCurrTime: true
       }
     }

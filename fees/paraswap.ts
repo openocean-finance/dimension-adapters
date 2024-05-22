@@ -27,7 +27,7 @@ interface IResponse {
 const fetch = (chain: Chain) => {
   return async (timestamp: number): Promise<FetchResultFees> => {
     const timestampToday = getTimestampAtStartOfDayUTC(timestamp)
-    const response: IResponse = (await fetchURL(feesMMURL)).data;
+    const response: IResponse = (await fetchURL(feesMMURL));
     const dailyResultFees: any[] = response.daily;
     const [__,totalPartnerRevenue, totalProtocolRevenue]: number[] = response.allTime[mapChainId[chain]];
     const [_, partnerRevenue, protocolRevenue]: number[] = dailyResultFees.filter(([time]: any) => time === timestampToday)
@@ -36,14 +36,17 @@ const fetch = (chain: Chain) => {
     const otherProtocolReveune = protocolRevenue;
 
     const dailyFees = otherFees;
+    if (dailyFees > 1_000_000) {
+      return {} as FetchResultFees;
+    }
     const dailyRevenue = otherProtocolReveune;
     const totalFees = totalPartnerRevenue + totalProtocolRevenue;
     const totalRevenue = totalProtocolRevenue;
     return {
-      dailyFees: dailyFees.toString(),
-      dailyRevenue: dailyRevenue.toString(),
-      totalRevenue: totalRevenue.toString(),
-      totalFees: totalFees.toString(),
+      dailyFees: dailyFees ? dailyFees.toString() : undefined,
+      dailyRevenue: dailyRevenue ? dailyRevenue.toString() : undefined,
+      totalRevenue: totalRevenue ? totalRevenue.toString() : undefined,
+      totalFees: totalFees ? totalFees.toString(): undefined,
       timestamp
     }
   }
@@ -53,31 +56,31 @@ const adapter: Adapter = {
   adapter: {
     [CHAIN.ETHEREUM]: {
         fetch: fetch(CHAIN.ETHEREUM),
-        start: async ()  => 1647907200,
+        start: 1647907200,
     },
     [CHAIN.POLYGON]: {
       fetch: fetch(CHAIN.POLYGON),
-      start: async ()  => 1647907200,
+      start: 1647907200,
     },
     [CHAIN.BSC]: {
       fetch: fetch(CHAIN.BSC),
-      start: async ()  => 1647907200,
+      start: 1647907200,
     },
     [CHAIN.AVAX]: {
       fetch: fetch(CHAIN.AVAX),
-      start: async ()  => 1647907200,
+      start: 1647907200,
     },
     [CHAIN.FANTOM]: {
       fetch: fetch(CHAIN.FANTOM),
-      start: async ()  => 1647907200,
+      start: 1647907200,
     },
     [CHAIN.ARBITRUM]: {
       fetch: fetch(CHAIN.ARBITRUM),
-      start: async ()  => 1647907200,
+      start: 1647907200,
     },
     [CHAIN.OPTIMISM]: {
       fetch: fetch(CHAIN.OPTIMISM),
-      start: async ()  => 1647907200,
+      start: 1647907200,
     }
   }
 }

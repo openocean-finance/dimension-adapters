@@ -1,7 +1,6 @@
 import { Chain } from "@defillama/sdk/build/general";
 import { request, gql } from "graphql-request";
-import { getBlock } from "../getBlock";
-import { BaseAdapter, ChainBlocks, FetchResultGeneric, IJSON, SimpleAdapter } from "../../adapters/types";
+import { BaseAdapter, FetchOptions, FetchResultGeneric, IJSON, SimpleAdapter } from "../../adapters/types";
 import { DEFAULT_DAILY_FEES_FACTORY, DEFAULT_DAILY_FEES_FIELD, DEFAULT_TOTAL_FEES_FACTORY, DEFAULT_TOTAL_FEES_FIELD } from "../getUniSubgraphFees";
 import BigNumber from "bignumber.js";
 import { getUniqStartOfTodayTimestamp, getUniswapDateId, handle200Errors } from "./utils";
@@ -13,7 +12,10 @@ const DEFAULT_TOTAL_VOLUME_FIELD = "totalVolumeUSD";
 const DEFAULT_DAILY_VOLUME_FACTORY = "uniswapDayData";
 const DEFAULT_DAILY_VOLUME_FIELD = "dailyVolumeUSD";
 const DEFAULT_DAILY_DATE_FIELD = "date";
-const DEFAULT_DAILY_PAIR_FACTORY = "pairDayDatas"
+const DEFAULT_DAILY_PAIR_FACTORY = "pairDayDatas";
+
+const DEFAULT_ID_TYPE = 'ID!'
+const DEFAULT_BLOCK_TYPE = 'Int'
 
 interface IGetChainVolumeParams {
   graphUrls: {
@@ -24,13 +26,15 @@ interface IGetChainVolumeParams {
   },
   totalVolume?: {
     factory?: string,
-    field?: string
+    field?: string,
+    blockGraphType?: string
   },
   dailyVolume?: {
     factory?: string,
     field?: string,
     dateField?: string,
-    pairs?: string
+    pairs?: string,
+    idGraphType?: string
   },
   totalFees?: {
     factory?: string,
@@ -71,12 +75,14 @@ function getGraphDimensions({
   totalVolume = {
     factory: DEFAULT_TOTAL_VOLUME_FACTORY,
     field: DEFAULT_TOTAL_VOLUME_FIELD,
+    blockGraphType: DEFAULT_BLOCK_TYPE
   },
   dailyVolume = {
     factory: DEFAULT_DAILY_VOLUME_FACTORY,
     field: DEFAULT_DAILY_VOLUME_FIELD,
     dateField: DEFAULT_DAILY_DATE_FIELD,
-    pairs: DEFAULT_DAILY_PAIR_FACTORY
+    pairs: DEFAULT_DAILY_PAIR_FACTORY,
+    idGraphType: DEFAULT_ID_TYPE
   },
   totalFees = {
     factory: DEFAULT_TOTAL_FEES_FACTORY,
@@ -96,11 +102,12 @@ function getGraphDimensions({
     factory: dailyVolume.factory ?? DEFAULT_DAILY_VOLUME_FACTORY,
     field: dailyVolume.field ?? DEFAULT_DAILY_VOLUME_FIELD,
     dateField: dailyVolume.dateField ?? DEFAULT_DAILY_DATE_FIELD, // For alternative query
-    pairs: dailyVolume.pairs ?? DEFAULT_DAILY_PAIR_FACTORY
+    pairs: dailyVolume.pairs ?? DEFAULT_DAILY_PAIR_FACTORY,
+    idGraphType: dailyVolume.idGraphType ?? DEFAULT_ID_TYPE
   }
   // Queries
   const dailyVolumeQuery = gql`
-  query daily_volume ($id: ID!) {
+  query daily_volume ($id: ${graphFieldsDailyVolume.idGraphType}) {
       ${graphFieldsDailyVolume.factory} (id: $id) {
         ${graphFieldsDailyVolume.field}
       }
@@ -118,10 +125,11 @@ function getGraphDimensions({
   const graphFieldsTotalVolume = {
     factory: totalVolume.factory ?? DEFAULT_TOTAL_VOLUME_FACTORY,
     field: totalVolume.field ?? DEFAULT_TOTAL_VOLUME_FIELD,
+    blockGraphType: totalVolume.blockGraphType ?? DEFAULT_BLOCK_TYPE
   }
   // Queries
   const totalVolumeQuery = gql`
-  query total_volume ($block: Int) {
+  query total_volume ($block: ${graphFieldsTotalVolume.blockGraphType}) {
     ${graphFieldsTotalVolume.factory}(block: { number: $block }) {
       ${graphFieldsTotalVolume.field}
     }
@@ -159,7 +167,7 @@ function getGraphDimensions({
 
     const dailyVolumePairsQuery = blacklistTokens[chain] ? gql`
     query daily_volume_byPair ($timestamp_gt: Int, $timestamp_lte: Int) {
-      pairDayDatas(where:{${graphFieldsDailyVolume.dateField}_gt: $timestamp_gt, ${graphFieldsDailyVolume.dateField}_lte: $timestamp_lte}){
+      pairDayDatas(where:{${graphFieldsDailyVolume.dateField}_gt: $timestamp_gt, ${graphFieldsDailyVolume.dateField}_lte: $timestamp_lte, ${graphFieldsDailyVolume.field}_not: 0}, orderBy: ${graphFieldsDailyVolume.field}, orderDirection: desc, first: 1000){
         date
         token0{
           symbol
@@ -172,26 +180,49 @@ function getGraphDimensions({
         ${graphFieldsDailyVolume.field}
       }
     }
-    `: undefined
-    return async (timestamp: number, chainBlocks: ChainBlocks) => {
+    `
+      : undefined;
+    return async (options: FetchOptions) => {
+      const { endTimestamp, getEndBlock } = options;
+      // ts-node --transpile-only cli/testAdapter.ts protocols uniswap
+      const customBlockFunc = getCustomBlock ? getCustomBlock : getEndBlock;
+      const block =
+        (await customBlockFunc(endTimestamp).catch((e: any) =>
+          console.log(wrapGraphError(e).message),
+        )) ?? undefined;
       // Get params
-      const id = String(getUniswapDateId(new Date(timestamp * 1000)));
-      const cleanTimestamp = getUniqStartOfTodayTimestamp(new Date(timestamp * 1000))
-      const customBlockFunc = getCustomBlock ? getCustomBlock : chainBlocks?.[chain] ? async (_: number) => chainBlocks[chain] : getBlock
-      const block = await customBlockFunc(timestamp, chain, chainBlocks).catch(e => console.log(e.message)) ?? undefined
+      const id = String(getUniswapDateId(new Date(endTimestamp * 1000)));
       // Execute queries
       // DAILY VOLUME
-      let graphResDailyVolume
-      let dailyVolume: any
+      let graphResDailyVolume;
+      let dailyVolume: any;
       if (dailyVolumePairsQuery) {
-        console.info("Calculating volume excluding blacklisted tokens...")
-        graphResDailyVolume = await request(graphUrls[chain], dailyVolumePairsQuery, {
-          timestamp_gt: timestamp - 3600 * 24,
-          timestamp_lte: timestamp
-        }, graphRequestHeaders?.[chain]).catch(handle200Errors).catch(e => console.error(`Failed to get daily volume on ${chain} with graph ${graphUrls[chain]}: ${e.message}`))
-        dailyVolume = graphResDailyVolume?.[graphFieldsDailyVolume.pairs]?.reduce((acc: number | undefined, current: pair) => {
-          if (blacklistTokens[chain].includes(current.token0.id) || blacklistTokens[chain].includes(current.token1.id))
-            return acc
+        console.info("Calculating volume excluding blacklisted tokens...");
+        graphResDailyVolume = await request(
+          graphUrls[chain],
+          dailyVolumePairsQuery,
+          {
+            timestamp_gt: endTimestamp - 3600 * 24,
+            timestamp_lte: endTimestamp,
+          },
+          graphRequestHeaders?.[chain],
+        )
+          .catch(handle200Errors)
+          .catch((e) =>
+            console.error(
+              `GraphFetchError: Failed to get daily volume on ${chain} with graph ${
+                graphUrls[chain]
+              }: ${wrapGraphError(e).message}`,
+            ),
+          );
+        dailyVolume = graphResDailyVolume?.[
+          graphFieldsDailyVolume.pairs
+        ]?.reduce((acc: number | undefined, current: pair) => {
+          if (
+            blacklistTokens[chain].includes(current.token0.id) ||
+            blacklistTokens[chain].includes(current.token1.id)
+          )
+            return acc;
           if (current?.[graphFieldsDailyVolume.field]) {
             if (acc) return acc += +current?.[graphFieldsDailyVolume.field]
             return +current?.[graphFieldsDailyVolume.field]
@@ -199,18 +230,18 @@ function getGraphDimensions({
           return acc
         }, undefined as number | undefined)
       } else {
-        graphResDailyVolume = await request(graphUrls[chain], dailyVolumeQuery, { id }, graphRequestHeaders?.[chain]).catch(handle200Errors).catch(e => console.error(`Failed to get daily volume on ${chain} with graph ${graphUrls[chain]}: ${e.message}`))
+        graphResDailyVolume = await request(graphUrls[chain], dailyVolumeQuery, { id }, graphRequestHeaders?.[chain]).catch(handle200Errors).catch(e => console.error(`GraphFetchError: Failed to get daily volume on ${chain} with graph ${graphUrls[chain]}: ${wrapGraphError(e).message}`))
         dailyVolume = graphResDailyVolume?.[graphFieldsDailyVolume.factory]?.[graphFieldsDailyVolume.field]
         if (!graphResDailyVolume || !dailyVolume) {
           console.info("Attempting with alternative query...")
-          graphResDailyVolume = await request(graphUrls[chain], alternativeDailyQuery, { timestamp: cleanTimestamp }, graphRequestHeaders?.[chain]).catch(handle200Errors).catch(e => console.error(`Failed to get alternative daily volume on ${chain} with graph ${graphUrls[chain]}: ${e.message}`))
+          graphResDailyVolume = await request(graphUrls[chain], alternativeDailyQuery, { timestamp: getUniqStartOfTodayTimestamp(new Date(endTimestamp * 1000)) }, graphRequestHeaders?.[chain]).catch(handle200Errors).catch(e => console.error(`Failed to get alternative daily volume on ${chain} with graph ${graphUrls[chain]}: ${wrapGraphError(e).message}`))
           const factory = graphFieldsDailyVolume.factory.toLowerCase().charAt(graphFieldsDailyVolume.factory.length - 1) === 's' ? graphFieldsDailyVolume.factory : `${graphFieldsDailyVolume.factory}s`
           dailyVolume = graphResDailyVolume?.[factory].reduce((p: any, c: any) => p + Number(c[graphFieldsDailyVolume.field]), 0);
         }
       }
 
       // TOTAL VOLUME
-      const graphResTotalVolume = await request(graphUrls[chain], totalVolumeQuery, { block }, graphRequestHeaders?.[chain]).catch(handle200Errors).catch(e => console.error(`Failed to get total volume on ${chain} with graph ${graphUrls[chain]}: ${e.message}`));
+      const graphResTotalVolume = await request(graphUrls[chain], totalVolumeQuery, { block }, graphRequestHeaders?.[chain]).catch(handle200Errors).catch(e => console.error(`GraphFetchError: Failed to get total volume on ${chain} with graph ${graphUrls[chain]}: ${wrapGraphError(e).message}`));
       const totalVolume = graphResTotalVolume?.[graphFieldsTotalVolume.factory]?.reduce((total: number, factory: any) => total + Number(factory[graphFieldsTotalVolume.field]), 0)?.toString()
 
       // DAILY FEES
@@ -228,7 +259,7 @@ function getGraphDimensions({
       const totalFees = graphResTotalFees?.[graphFieldsTotalFees.factory]?.reduce((total: number, factory: any) => total + Number(factory[graphFieldsTotalFees.field]), 0)
 
       const response: FetchResultGeneric = {
-        timestamp,
+        timestamp: endTimestamp,
         block,
         totalVolume,
         dailyVolume,
@@ -267,18 +298,29 @@ function univ2DimensionAdapter(params: IGetChainVolumeParams, meta: BaseAdapter[
             chain,
             volumeField: params.dailyVolume?.field,
             dailyDataField: params.dailyVolume?.factory + "s",
-            dateField: params.dailyVolume?.dateField
+            dateField: params.dailyVolume?.dateField,
           }),
-          meta
-        }
-      }
-    }, {} as BaseAdapter)
+          meta,
+        },
+      };
+    }, {} as BaseAdapter),
+    version: 2
   };
 
   return adapter;
 }
 
+function wrapGraphError(e: Error) {
+  const message = (e as any).response?.errors?.[0]?.message ?? e.message;
+  return new Error(shortenString(message));
+
+  function shortenString(str: string, maxLength: number = 420) {
+    return str.length > maxLength ? str.slice(0, maxLength) + "..." : str;
+  }
+}
+
 export {
+  wrapGraphError,
   getGraphDimensions,
   univ2DimensionAdapter,
   DEFAULT_TOTAL_VOLUME_FACTORY,

@@ -1,25 +1,34 @@
-//  Maverick v1 data
-import { getUniqStartOfTodayTimestamp } from "../../helpers/getUniSubgraphVolume";
-import { Chain } from "@defillama/sdk/build/general";
-import { getPrices } from "../../utils/prices";
-const { request, gql } = require("graphql-request");
+import { CHAIN } from "../../helpers/chains";
+import { ChainBlocks, FetchOptions } from "../../adapters/types";
+const { request, } = require("graphql-request");
 
 const info: { [key: string]: any } = {
-  ethereum: {
-    subgraph: "https://api.studio.thegraph.com/query/42519/maverick-v1/v0.0.6",
+  [CHAIN.ETHEREUM]: {
+    subgraph: "https://api.thegraph.com/subgraphs/name/maverick-protocol/maverick-mainnet-data",
+  },
+  [CHAIN.ERA]: {
+    subgraph:
+      "https://api.studio.thegraph.com/query/36330/mav-zksync/version/latest",
+  },
+  [CHAIN.BSC]: {
+    subgraph:
+      "https://api.thegraph.com/subgraphs/name/maverick-protocol/maverick-bnb-app",
+  },
+  [CHAIN.BASE]: {
+    subgraph:
+      "https://api.studio.thegraph.com/query/42519/maverick-base/version/latest",
   },
 };
 
-const getData = async (chain: Chain, timestamp: number) => {
-  const totdayTimestamp = getUniqStartOfTodayTimestamp(
-    new Date(timestamp * 1000)
-  );
+const getData = async ({ chain, createBalances, startOfDay }: FetchOptions) => {
+  const dailyFees = createBalances();
+  const totalFees = createBalances();
+  const dailyUserFees = createBalances();
+  const totalUserFees = createBalances();
+  const dailyVolume = createBalances();
+  const totalVolume = createBalances();
 
   let returnCount = 1000;
-  let daySum = 0;
-  let totalSum = 0;
-  let dayFee = 0;
-  let totalFee = 0;
   let step = 0;
   while (returnCount == 1000) {
     const graphQL = `{
@@ -28,16 +37,18 @@ const getData = async (chain: Chain, timestamp: number) => {
           orderDirection: desc
           first: 1000
           skip: ${step * 1000}
-          where: {timestamp: "${totdayTimestamp}"}
+          where: {timestamp: "${startOfDay}"}
         ) {
           id
           pool {
             id
             tokenB {
               id
+              decimals
             }
             tokenA {
               id
+              decimals
             }
             tokenAVolume
             tokenBVolume
@@ -53,74 +64,56 @@ const getData = async (chain: Chain, timestamp: number) => {
     returnCount = data.poolDayStats.length;
     step++;
 
-    let tokenArray = [] as string[];
     for (const dailyData of data.poolDayStats) {
-      tokenArray.push(chain + ":" + dailyData.pool.tokenA.id);
-      tokenArray.push(chain + ":" + dailyData.pool.tokenB.id);
-    }
-    let unique = [...new Set(tokenArray)] as string[];
-    const prices = await getPrices(unique, totdayTimestamp);
+      const tokenAId = dailyData.pool.tokenA.id;
+      const tokenBId = dailyData.pool.tokenB.id;
+      const multiplierA = 10 ** dailyData.pool.tokenA.decimals;
+      const multiplierB = 10 ** dailyData.pool.tokenB.decimals;
+      dailyVolume.add(tokenAId, dailyData.tokenAVolume * multiplierA);
+      dailyVolume.add(tokenBId, dailyData.tokenBVolume * multiplierB);
+      dailyFees.add(tokenAId, dailyData.tokenAVolume * multiplierA * dailyData.pool.fee);
+      dailyFees.add(tokenBId, dailyData.tokenBVolume * multiplierB * dailyData.pool.fee);
 
-    for (const dailyData of data.poolDayStats) {
-      const tokenAId = chain + ":" + dailyData.pool.tokenA.id;
-      const tokenBId = chain + ":" + dailyData.pool.tokenB.id;
-      daySum += Number(dailyData.tokenAVolume) * prices[tokenAId].price;
-      daySum += Number(dailyData.tokenBVolume) * prices[tokenBId].price;
-      dayFee +=
-        Number(dailyData.tokenAVolume) *
-        prices[tokenAId].price *
-        dailyData.pool.fee;
-      dayFee +=
-        Number(dailyData.tokenBVolume) *
-        prices[tokenBId].price *
-        dailyData.pool.fee;
-
-      totalSum += Number(dailyData.pool.tokenAVolume) * prices[tokenAId].price;
-      totalSum += Number(dailyData.pool.tokenBVolume) * prices[tokenBId].price;
-      totalFee +=
-        Number(dailyData.pool.tokenAVolume) *
-        prices[tokenAId].price *
-        dailyData.pool.fee;
-      totalFee +=
-        Number(dailyData.pool.tokenBVolume) *
-        prices[tokenBId].price *
-        dailyData.pool.fee;
+      totalVolume.add(tokenAId, dailyData.pool.tokenAVolume * multiplierA);
+      totalVolume.add(tokenBId, dailyData.pool.tokenBVolume * multiplierB);
+      totalFees.add(tokenAId, dailyData.pool.tokenAVolume * multiplierA * dailyData.pool.fee);
+      totalFees.add(tokenBId, dailyData.pool.tokenBVolume * multiplierB * dailyData.pool.fee);
     }
   }
 
   return {
-    dailyFees: `${dayFee}`,
-    totalFees: `${totalFee}`,
-    dailyUserFees: `${dayFee}`,
-    totalUserFees: `${totalFee}`,
-    totalVolume: `${totalSum}`,
-    dailyVolume: `${daySum}`,
-    timestamp: totdayTimestamp,
+    dailyFees,
+    totalFees,
+    dailyUserFees: dailyFees,
+    totalUserFees: totalFees,
+    totalVolume,
+    dailyVolume,
+    timestamp: startOfDay,
   };
 };
 
-export const fetchVolume = (chain: Chain) => {
-  return async (timestamp: number) => {
-    const data = await getData(chain, timestamp);
+export const fetchVolume = (_chain: string) => {
+  return async (_timestamp: number, _: ChainBlocks, options: FetchOptions) => {
+    const data = await getData(options);
 
     return {
-      totalVolume: data.totalVolume,
+      // totalVolume: data.totalVolume,
       dailyVolume: data.dailyVolume,
       timestamp: data.timestamp,
     };
   };
 };
 
-export const fetchFee = (chain: Chain) => {
-  return async (timestamp: number) => {
-    const data = await getData(chain, timestamp);
+export const fetchFee = (_chain: string) => {
+  return async (timestamp: number, _: ChainBlocks, options: FetchOptions) => {
+    const data = await getData(options);
 
     return {
       timestamp,
       dailyFees: data.dailyFees,
-      totalFees: data.totalFees,
+      // totalFees: data.totalFees,
       dailyUserFees: data.dailyUserFees,
-      totalUserFees: data.totalUserFees,
+      // totalUserFees: data.totalUserFees,
     };
   };
 };

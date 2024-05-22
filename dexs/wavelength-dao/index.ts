@@ -2,10 +2,10 @@ const { request, gql } = require("graphql-request");
 import { SimpleAdapter } from "../../adapters/types";
 import { CHAIN } from "../../helpers/chains";
 import customBackfill, { IGraphs } from "../../helpers/customBackfill";
-import { getStartTimestamp } from "../../helpers/getStartTimestamp";
 import { getChainVolume } from "../../helpers/getUniSubgraphVolume";
 
-const blocksGraph = "https://testeborabora.cyou/subgraphs/name/blocks";
+const blocksGraph = "https://teste.testeborabora.cyou/graphql";
+const ONE_DAY_IN_SECONDS = 60 * 60 * 24
 const blockQuery = gql`
   query blocks($timestampFrom: Int!, $timestampTo: Int!) {
     blocks(
@@ -24,15 +24,15 @@ const blockQuery = gql`
 
 
 const getCustomBlock = async (timestamp: number) => {
-  const block = Number(
+  const block =
     (
       await request(blocksGraph, blockQuery, {
-        timestampFrom: timestamp - 30,
-        timestampTo: timestamp + 30,
+        timestampFrom: timestamp - ONE_DAY_IN_SECONDS,
+        timestampTo: timestamp + ONE_DAY_IN_SECONDS,
       })
     ).blocks[0].number
-  );
-  return block;
+  ;
+  return Number(block);
 };
 
 const endpoints = {
@@ -44,25 +44,16 @@ const graphs = getChainVolume({
     factory: "balancers",
     field: "totalSwapVolume",
   },
-  dailyVolume: {
-    factory: "balancerSnapshot",
-    field: "totalSwapVolume",
-    dateField: "timestamp"
-  },
-  getCustomBlock,
+  hasDailyVolume: false,
+  // getCustomBlock,
 });
 
 const adapter: SimpleAdapter = {
+  version: 2,
   adapter: {
     [CHAIN.VELAS]: {
       fetch: graphs(CHAIN.VELAS),
-      start: getStartTimestamp({
-        endpoints,
-        chain: CHAIN.VELAS,
-        dailyDataField: `balancerSnapshots`,
-        dateField: 'timestamp',
-        volumeField: 'totalSwapVolume'
-      }),
+      start: 1666263553,
       customBackfill: customBackfill(CHAIN.VELAS, graphs as unknown as IGraphs)
     },
   },

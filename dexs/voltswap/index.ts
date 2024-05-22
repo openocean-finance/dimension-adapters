@@ -8,7 +8,7 @@ const {
 } = require("../../helpers/getUniSubgraphVolume");
 const { getStartTimestamp } = require("../../helpers/getStartTimestamp");
 const endpoints = {
-  [CHAIN.METER]: "https://graph-meter.voltswap.finance/subgraphs/name/meterio/uniswap-v2-subgraph",
+  [CHAIN.METER]: "https://graph-meter.voltswap.finance/subgraphs/name/meterio/voltswapv2-subgraph",
 };
 
 const DAILY_VOLUME_FACTORY = "uniswapDayData";
@@ -26,6 +26,7 @@ const graphs = getChainVolume({
 });
 
 const adapter: BreakdownAdapter = {
+  version: 2,
   breakdown: {
     v1: {
       [DISABLED_ADAPTER_KEY]: disabledAdapter,
